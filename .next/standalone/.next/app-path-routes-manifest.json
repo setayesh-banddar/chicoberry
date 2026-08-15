@@ -1,0 +1,7 @@
+{
+  "/[[...slug]]/page": "/[[...slug]]",
+  "/_global-error/page": "/_global-error",
+  "/_not-found/page": "/_not-found",
+  "/api/route": "/api",
+  "/api/uploads/[...path]/route": "/api/uploads/[...path]"
+}
