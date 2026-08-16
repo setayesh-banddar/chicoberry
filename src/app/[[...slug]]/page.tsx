@@ -55,6 +55,7 @@ import {
   Save,
   FileText,
   Wallet,
+  ListChecks,
 } from "lucide-react";
 
 const C = {
@@ -133,7 +134,17 @@ type Product = {
 type HeroSlide = { img: string; badge: string; t1: string; t2: string; t3: string; desc: string; btn: string; };
 type Order = { id: string; items: { name: string; img: string; qty: number; price: string }[]; total: number; status: string; date: string; address: string; phone: string; };
 type ContactMessage = { id: string; name: string; phone: string; subject: string; message: string; date: string; reply: string; replyDate: string; };
+type CheckoutFieldConfig = { id: string; label: string; placeholder: string; type: "text" | "tel" | "textarea" | "number"; required: boolean; width: "full" | "half"; dir: "rtl" | "ltr"; enabled: boolean; };
 
+
+const DEFAULT_CHECKOUT_FIELDS: CheckoutFieldConfig[] = [
+  { id: "name", label: "نام و نام خانوادگی", placeholder: "سارا محمدی", type: "text", required: true, width: "half", dir: "rtl", enabled: true },
+  { id: "phone", label: "شماره تماس", placeholder: "۰۹۱۲XXXXXXXX", type: "tel", required: true, width: "half", dir: "ltr", enabled: true },
+  { id: "address", label: "آدرس کامل", placeholder: "خیابان، کوچه، پلاک، واحد...", type: "textarea", required: true, width: "full", dir: "rtl", enabled: true },
+  { id: "postal", label: "کد پستی", placeholder: "XXXXXXXXXX", type: "text", required: false, width: "half", dir: "ltr", enabled: true },
+  { id: "city", label: "استان / شهر", placeholder: "تهران", type: "text", required: false, width: "half", dir: "rtl", enabled: true },
+  { id: "note", label: "توضیحات سفارش", placeholder: "توضیحات اضافی (اختیاری)", type: "textarea", required: false, width: "full", dir: "rtl", enabled: true },
+];
 
 const defaultProducts: Product[] = [
   { name: "عروسک گل رز فانتزی", price: "۲۴۵,۰۰۰", oldPrice: "۳۲۰,۰۰۰", discount: "۲۳٪", img: "/products/rose.jpg", desc: "عروسک گل رز فانتزی با طراحی بامزه و ناز، بهترین هدیه برای عزیزانتان. این عروسک با پارچه‌های نرم و ضد حساسیت ساخته شده و مناسب برای همه سنین است.", cat: "عروسک گل" },
@@ -223,6 +234,12 @@ export default function HomePage() {
   const [toast, setToast] = useState<string | null>(null);
   useEffect(() => { if (toast) { const t = setTimeout(() => setToast(null), 3000); return () => clearTimeout(t); } }, [toast]);
   const [checkoutDone, setCheckoutDone] = useState(false);
+  const [checkoutStep, setCheckoutStep] = useState(1);
+  const [checkoutForm, setCheckoutForm] = useState<Record<string, string>>({});
+  const [checkoutErrors, setCheckoutErrors] = useState<Record<string, string>>({});
+  const [checkoutFields, setCheckoutFields] = useState<CheckoutFieldConfig[]>(DEFAULT_CHECKOUT_FIELDS);
+  const [editFormField, setEditFormField] = useState<CheckoutFieldConfig | null>(null);
+  const [showFormFieldForm, setShowFormFieldForm] = useState(false);
   const [payMethod, setPayMethod] = useState<string>("online");
   const [paySettings, setPaySettings] = useState<{
     onlineEnabled: boolean; onlineTitle: string; onlineDesc: string; gatewayMerchant: string;
@@ -235,6 +252,8 @@ export default function HomePage() {
     codEnabled: true, codTitle: "پرداخت در محل", codDesc: "پرداخت هنگام تحویل سفارش",
     shippingFreeMin: 500000, shippingCost: 45000,
   });
+  const [currency, setCurrency] = useState<string>(() => { try { return JSON.parse(localStorage.getItem("cb_currency") || '"toman"'); } catch { return "toman"; } });
+  const [dollarRate, setDollarRate] = useState<number>(() => { try { return JSON.parse(localStorage.getItem("cb_dollar_rate") || "85000"); } catch { return 85000; } });
   const [heroSlides, setHeroSlides] = useState<HeroSlide[]>(defaultHeroSlides);
   const [heroSlideIdx, setHeroSlideIdx] = useState(0);
   const [editingSlideIdx, setEditingSlideIdx] = useState<number | null>(null);
@@ -243,7 +262,7 @@ export default function HomePage() {
   const [cats, setCats] = useState<CatItem[]>(defaultCategories);
   const [features, setFeatures] = useState<FeatureItem[]>(defaultFeatures);
   const [reviews, setReviews] = useState<ReviewItem[]>(defaultReviews);
-  const [adminSection, setAdminSection] = useState<string>("slides");
+  const [adminSection, setAdminSection] = useState<string>("dashboard");
   const [catForm, setCatForm] = useState<CatItem>({ n: "", icon: "" });
   const [editingCatIdx, setEditingCatIdx] = useState<number | null>(null);
   const [featForm, setFeatForm] = useState<FeatureItem>({ icon: "", t: "", d: "" });
@@ -401,19 +420,29 @@ export default function HomePage() {
     setToast(""); setTimeout(() => setToast("پاسخ ارسال شد"), 10);
   };
   const saveCheckout = () => {
-    if (!isLoggedIn) return;
+    const errors: Record<string, string> = {};
+    checkoutFields.filter(f => f.required && f.enabled).forEach(f => {
+      if (!checkoutForm[f.id] || !checkoutForm[f.id].trim()) errors[f.id] = f.label + " الزامی است";
+    });
+    if (Object.keys(errors).length > 0) { setCheckoutErrors(errors); return false; }
+    setCheckoutErrors({});
+    if (!isLoggedIn) return false;
     const order: Order = {
       id: "CB-" + Date.now().toString(36).toUpperCase(),
       items: cart.map(item => ({ name: item.name, img: item.img, qty: item.qty, price: item.price })),
-      total: cartTotal + (cartTotal >= 500000 ? 0 : 45000),
+      total: cartTotal + (cartTotal >= paySettings.shippingFreeMin ? 0 : paySettings.shippingCost),
       status: "در حال پردازش",
       date: new Date().toLocaleDateString("fa-IR"),
-      address: "تهران",
-      phone: userPhone,
+      address: checkoutFields.filter(f => checkoutForm[f.id]).map(f => f.label + ": " + checkoutForm[f.id]).join(" | "),
+      phone: checkoutForm.phone,
     };
     const newOrders = [order, ...userOrders];
     setUserOrders(newOrders);
     localStorage.setItem("cb_orders", JSON.stringify(newOrders));
+    setCart([]);
+    setCheckoutForm(Object.fromEntries(checkoutFields.map(f => [f.id, ""])));
+    setCheckoutStep(1);
+    return true;
   };
 
   useEffect(() => {
@@ -421,6 +450,7 @@ export default function HomePage() {
       try { const v = localStorage.getItem("cb_slides_ver"); if (v !== SLIDES_VERSION) { localStorage.removeItem("cb_hero_slides"); localStorage.setItem("cb_slides_ver", SLIDES_VERSION); } else { const s = localStorage.getItem("cb_hero_slides"); if (s) { const p = JSON.parse(s); if (Array.isArray(p) && p.length > 0) setHeroSlides(p); } } } catch {}
       try { const v = localStorage.getItem("cb_products_ver"); if (v !== PRODUCTS_VERSION) { localStorage.removeItem("cb_products"); localStorage.setItem("cb_products_ver", PRODUCTS_VERSION); } else { const s = localStorage.getItem("cb_products"); if (s) { const p = JSON.parse(s); if (Array.isArray(p) && p.length > 0) setProducts(p); } } } catch {}
       try { const a = localStorage.getItem("cb_admin"); if (a === "1") setIsAdmin(true); } catch {}
+      try { const cf = localStorage.getItem("cb_checkout_fields"); if (cf) { const p = JSON.parse(cf); if (Array.isArray(p) && p.length > 0 && p[0].id !== undefined) { setCheckoutFields(p); const init: Record<string, string> = {}; p.forEach((f: CheckoutFieldConfig) => { init[f.id] = ""; }); setCheckoutForm(init); } else { const init: Record<string, string> = {}; DEFAULT_CHECKOUT_FIELDS.forEach(f => { init[f.id] = ""; }); setCheckoutForm(init); } } else { const init: Record<string, string> = {}; DEFAULT_CHECKOUT_FIELDS.forEach(f => { init[f.id] = ""; }); setCheckoutForm(init); } } catch {}
     }
   }, []);
   useEffect(() => { if (typeof window !== "undefined" && products.length > 0) localStorage.setItem("cb_products", JSON.stringify(products)); }, [products]);
@@ -510,7 +540,7 @@ export default function HomePage() {
     } catch { setToast(""); setTimeout(() => setToast("خطا در آپلود آیکون"), 10); } finally { setCatIconUploading(false); }
   };
 
-  const logoutAdmin = () => { setIsAdmin(false); localStorage.removeItem("cb_admin"); };
+  const logoutAdmin = () => { setIsAdmin(false); setCurrentPage("home"); localStorage.removeItem("cb_admin"); window.history.pushState({ page: "home" }, "", "/"); window.scrollTo({ top: 0, behavior: "smooth" }); };
   const [adminUsers, setAdminUsers] = useState<{name:string;phone:string;email:string;pass:string}[]>([]);
   const loadAdminUsers = () => { try { const users: {name:string;phone:string;email:string;pass:string}[] = []; for (let i = 0; i < localStorage.length; i++) { const k = localStorage.key(i); if (k && k.startsWith("cb_user_")) { try { const d = JSON.parse(localStorage.getItem(k) || "{}"); if (d.name && d.phone) users.push({ name: d.name, phone: d.phone, email: d.email || "", pass: d.pass || "" }); } catch {} } } setAdminUsers(users); } catch {} };
   const deleteUser = (phone: string) => { if (!confirm("کاربر حذف شود؟")) return; try { localStorage.removeItem("cb_user_" + phone); loadAdminUsers(); setToast(""); setTimeout(() => setToast("کاربر حذف شد"), 10); } catch {} };
@@ -526,6 +556,19 @@ export default function HomePage() {
 
   const toFa = (n: number) => n.toLocaleString("fa-IR");
   const parsePrice = (s: string) => parseInt(s.replace(/[۰-۹٬,\s]/g, (c) => c >= '۰' && c <= '۹' ? String(c.charCodeAt(0) - 0x06F0) : '')) || 0;
+  const currencySymbol = () => currency === "toman" ? " تومان" : currency === "rial" ? " ریال" : " $";
+  const currencyLabel = () => currency === "toman" ? "تومان" : currency === "rial" ? "ریال" : "دلار";
+  const formatPrice = (priceStr: string) => {
+    const num = parsePrice(priceStr);
+    if (currency === "dollar") return (num / dollarRate).toFixed(2) + " $";
+    if (currency === "rial") return toFa(num * 10) + " ریال";
+    return priceStr + " تومان";
+  };
+  const formatPriceNum = (num: number) => {
+    if (currency === "dollar") return (num / dollarRate).toFixed(2) + " $";
+    if (currency === "rial") return toFa(num * 10) + " ریال";
+    return toFa(num) + " تومان";
+  };
 
 
   useEffect(() => {
@@ -612,7 +655,8 @@ export default function HomePage() {
 
   return (
     <div className="min-h-screen flex flex-col" style={{ background: C.bg }}>
-      {/* NAVBAR */}
+      {/* NAVBAR - hidden on admin page */}
+      {currentPage !== "admin" && (
       <nav className={"fixed top-0 left-0 right-0 z-50 transition-all duration-500 bg-white/95 backdrop-blur-md" + (scrolled ? " shadow-md" : "")}>
         <div className="max-w-6xl mx-auto px-4 sm:px-6 flex items-center justify-between h-16">
           <a href="#" onClick={(e) => { e.preventDefault(); navTo("home"); }} className="flex items-center gap-2 cursor-pointer">
@@ -718,6 +762,7 @@ export default function HomePage() {
           )}
         </AnimatePresence>
       </nav>
+      )}
 
       <AnimatePresence mode="wait">
         {/* ===== HOME ===== */}
@@ -809,8 +854,8 @@ export default function HomePage() {
                       <div className="p-3 sm:p-4 md:p-5">
                         <h3 className="font-bold text-xs sm:text-sm mb-2 sm:mb-3" style={{ color: C.text }}>{pr.name}</h3>
                         <div className="flex items-center justify-between">
-                          <span className="font-extrabold text-sm sm:text-lg" style={{ color: C.dark }}>{pr.price}</span>
-                          <span className="line-through text-[10px] sm:text-xs" style={{ color: C.textL + "55" }}>{pr.oldPrice}</span>
+                          <span className="font-extrabold text-sm sm:text-lg" style={{ color: C.dark }}>{formatPrice(pr.price)}</span>
+                          {pr.oldPrice && <span className="line-through text-[10px] sm:text-xs" style={{ color: C.textL + "55" }}>{formatPrice(pr.oldPrice)}</span>}
                         </div>
                         <button onClick={(e) => { e.stopPropagation(); addToCart(realIdx); }} className="w-full mt-2 sm:mt-3 py-2 sm:py-2.5 rounded-xl text-white text-xs sm:text-sm font-bold hover:opacity-90 transition-opacity cursor-pointer flex items-center justify-center gap-1.5 sm:gap-2" style={{ background: gradH }}>
                           <ShoppingBag className="w-3.5 h-3.5 sm:w-4 sm:h-4" />افزودن به سبد
@@ -926,11 +971,11 @@ export default function HomePage() {
 
                   <div className="bg-white rounded-2xl p-5 mb-6 shadow-sm">
                     <div className="flex items-center gap-4 mb-4">
-                      <span className="text-2xl sm:text-3xl font-extrabold" style={{ color: C.dark }}>{p.price}</span>
+                      <span className="text-2xl sm:text-3xl font-extrabold" style={{ color: C.dark }}>{formatPrice(p.price)}</span>
                       
                     </div>
                     <div className="flex items-center gap-3">
-                      <span className="line-through text-sm" style={{ color: C.textL + "66" }}>{p.oldPrice}</span>
+                      {p.oldPrice && <span className="line-through text-sm" style={{ color: C.textL + "66" }}>{formatPrice(p.oldPrice)}</span>}
                       <span className="text-xs font-bold px-2 py-0.5 rounded-full text-white" style={{ background: C.red }}>{p.discount}</span>
                     </div>
                   </div>
@@ -972,7 +1017,7 @@ export default function HomePage() {
                       </div>
                       <div className="p-3 text-center">
                         <h3 className="font-bold text-xs mb-1 truncate" style={{ color: C.text }}>{pr.name}</h3>
-                        <span className="font-bold text-sm" style={{ color: C.dark }}>{pr.price}</span>
+                        <span className="font-bold text-sm" style={{ color: C.dark }}>{formatPrice(pr.price)}</span>
                       </div>
                     </div>
                   ))}
@@ -1032,8 +1077,8 @@ export default function HomePage() {
                           <span className="text-[10px] font-medium mb-1 block" style={{ color: C.pink }}>{pr.cat}</span>
                           <h3 className="font-bold text-sm mb-2" style={{ color: C.text }}>{pr.name}</h3>
                           <div className="flex items-center justify-between mb-2">
-                            <span className="font-extrabold text-base" style={{ color: C.dark }}>{pr.price}</span>
-                            <span className="line-through text-xs" style={{ color: C.textL + "55" }}>{pr.oldPrice}</span>
+                            <span className="font-extrabold text-base" style={{ color: C.dark }}>{formatPrice(pr.price)}</span>
+                            {pr.oldPrice && <span className="line-through text-xs" style={{ color: C.textL + "55" }}>{formatPrice(pr.oldPrice)}</span>}
                           </div>
                           <button onClick={(e) => { e.stopPropagation(); addToCart(realIdx); }} className="w-full py-2 rounded-lg text-white text-xs font-bold hover:opacity-90 transition-opacity cursor-pointer flex items-center justify-center gap-1.5" style={{ background: gradH }}>
                             <ShoppingBag className="w-3.5 h-3.5" />افزودن
@@ -1109,8 +1154,8 @@ export default function HomePage() {
                                 <button onClick={() => updateQty(item.idx, 1)} className="w-8 h-8 rounded-lg bg-white shadow-sm flex items-center justify-center hover:opacity-70 transition-opacity cursor-pointer" style={{ color: C.dark }}><Plus className="w-4 h-4" /></button>
                               </div>
                               <div className="text-left">
-                                <div className="font-extrabold text-base sm:text-lg" style={{ color: C.dark }}>{itemTotal.toLocaleString("fa-IR")}</div>
-                                {item.qty > 1 && <div className="text-[10px] line-through" style={{ color: C.textL + "66" }}>{item.price}</div>}
+                                <div className="font-extrabold text-base sm:text-lg" style={{ color: C.dark }}>{formatPriceNum(itemTotal)}</div>
+                                {item.qty > 1 && <div className="text-[10px] line-through" style={{ color: C.textL + "66" }}>{formatPrice(item.price)}</div>}
                               </div>
                             </div>
                           </div>
@@ -1130,15 +1175,15 @@ export default function HomePage() {
                         </div>
                         <div className="flex items-center justify-between text-sm">
                           <span style={{ color: C.textL }}>هزینه ارسال</span>
-                          <span className="font-bold text-xs px-2 py-0.5 rounded-full text-white" style={{ background: C.pink }}>{cartTotal >= 500000 ? "رایگان" : "محاسبه بعد"}</span>
+                          <span className="font-bold text-xs px-2 py-0.5 rounded-full text-white" style={{ background: cartTotal >= paySettings.shippingFreeMin ? "#22c55e" : C.pink }}>{cartTotal >= paySettings.shippingFreeMin ? "رایگان" : formatPriceNum(paySettings.shippingCost)}</span>
                         </div>
                       </div>
                       <div className="flex items-center justify-between mb-6">
                         <span className="font-bold" style={{ color: C.dark }}>مبلغ قابل پرداخت</span>
-                        <span className="text-xl font-extrabold" style={{ color: C.dark }}>{cartTotal.toLocaleString("fa-IR")}</span>
+                        <span className="text-xl font-extrabold" style={{ color: C.dark }}>{formatPriceNum(cartTotal)}</span>
                       </div>
-                      {cartTotal < 500000 && (
-                        <p className="text-xs mb-4 text-center" style={{ color: C.textL + "aa" }}>برای ارسال رایگان تا {((500000 - cartTotal).toLocaleString("fa-IR"))} دیگر خرید کنید!</p>
+                      {cartTotal < paySettings.shippingFreeMin && (
+                        <p className="text-xs mb-4 text-center" style={{ color: C.textL + "aa" }}>برای ارسال رایگان تا {formatPriceNum(paySettings.shippingFreeMin - cartTotal)} دیگر خرید کنید!</p>
                       )}
                       <button onClick={() => navTo("checkout")} className="w-full flex items-center justify-center gap-2 py-3.5 rounded-xl text-white font-bold text-base hover:opacity-90 transition-opacity shadow-lg cursor-pointer" style={{ background: gradH }}>
                         <CreditCard className="w-5 h-5" />تکمیل سفارش
@@ -1195,7 +1240,7 @@ export default function HomePage() {
                       <div className="md:col-span-3 flex flex-col gap-6">
                         {/* Steps Indicator */}
                         <div className="flex items-center justify-center gap-0 mb-2">
-                          {[{n: "سبد خرید", active: false, done: true}, {n: "اطلاعات ارسال", active: true, done: false}, {n: "ثبت سفارش", active: false, done: false}].map((step, i) => (
+                          {[{n: "سبد خرید", active: false, done: true}, {n: "اطلاعات ارسال", active: checkoutStep === 1, done: checkoutStep >= 2}, {n: "ثبت سفارش", active: checkoutStep === 2, done: false}].map((step, i) => (
                             <div key={step.n} className="flex items-center">
                               <div className="flex items-center gap-2">
                                 <div className={`w-8 h-8 rounded-full flex items-center justify-center text-xs font-bold ${step.active ? "text-white" : step.done ? "text-white" : ""}`} style={{ background: step.active ? gradH : step.done ? C.red : C.light + "44", color: (!step.active && !step.done) ? C.textL : "#fff" }}>
@@ -1209,6 +1254,8 @@ export default function HomePage() {
                         </div>
 
                         {/* Shipping Info */}
+                        {/* Step 1: Shipping Info & Payment */}
+                        {checkoutStep === 1 && (<>
                         <motion.div initial={{ opacity: 0, x: -20 }} animate={{ opacity: 1, x: 0 }} transition={{ delay: 0.15, duration: 0.5 }} className="bg-white rounded-2xl p-6 shadow-sm">
                           <div className="flex items-center gap-2 mb-5">
                             <div className="w-10 h-10 rounded-xl flex items-center justify-center" style={{ background: "linear-gradient(135deg, #FFE0E8, #FFF0F3)" }}>
@@ -1217,34 +1264,31 @@ export default function HomePage() {
                             <h2 className="text-lg font-bold" style={{ color: C.dark }}>اطلاعات ارسال</h2>
                           </div>
                           <div className="flex flex-col gap-4">
-                            <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
-                              <div>
-                                <label className="block text-sm font-medium mb-2" style={{ color: C.text }}>نام و نام خانوادگی <span style={{ color: C.red }}>*</span></label>
-                                <input type="text" placeholder="سارا محمدی" className="w-full px-4 py-3 rounded-xl border text-sm outline-none transition-all focus:ring-2 focus:ring-[#F49CBB]/40" style={{ borderColor: C.light + "66", background: C.bg, color: C.text }} />
-                              </div>
-                              <div>
-                                <label className="block text-sm font-medium mb-2" style={{ color: C.text }}>شماره تماس <span style={{ color: C.red }}>*</span></label>
-                                <input type="tel" placeholder="۰۹۱۲XXXXXXXX" className="w-full px-4 py-3 rounded-xl border text-sm outline-none transition-all focus:ring-2 focus:ring-[#F49CBB]/40" style={{ borderColor: C.light + "66", background: C.bg, color: C.text }} dir="ltr" />
-                              </div>
-                            </div>
-                            <div>
-                              <label className="block text-sm font-medium mb-2" style={{ color: C.text }}>آدرس کامل <span style={{ color: C.red }}>*</span></label>
-                              <textarea rows={3} placeholder="خیابان، کوچه، پلاک، واحد..." className="w-full px-4 py-3 rounded-xl border text-sm outline-none transition-all focus:ring-2 focus:ring-[#F49CBB]/40 resize-none" style={{ borderColor: C.light + "66", background: C.bg, color: C.text }} />
-                            </div>
-                            <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
-                              <div>
-                                <label className="block text-sm font-medium mb-2" style={{ color: C.text }}>کد پستی</label>
-                                <input type="text" placeholder="XXXXXXXXXX" className="w-full px-4 py-3 rounded-xl border text-sm outline-none transition-all focus:ring-2 focus:ring-[#F49CBB]/40" style={{ borderColor: C.light + "66", background: C.bg, color: C.text }} dir="ltr" />
-                              </div>
-                              <div>
-                                <label className="block text-sm font-medium mb-2" style={{ color: C.text }}>استان / شهر</label>
-                                <input type="text" placeholder="تهران" className="w-full px-4 py-3 rounded-xl border text-sm outline-none transition-all focus:ring-2 focus:ring-[#F49CBB]/40" style={{ borderColor: C.light + "66", background: C.bg, color: C.text }} />
-                              </div>
-                            </div>
-                            <div>
-                              <label className="block text-sm font-medium mb-2" style={{ color: C.text }}>توضیحات سفارش</label>
-                              <textarea rows={2} placeholder="توضیحات اضافی (اختیاری)" className="w-full px-4 py-3 rounded-xl border text-sm outline-none transition-all focus:ring-2 focus:ring-[#F49CBB]/40 resize-none" style={{ borderColor: C.light + "66", background: C.bg, color: C.text }} />
-                            </div>
+                            {(() => {
+                              const enabledFields = checkoutFields.filter(f => f.enabled);
+                              return enabledFields.map((field, fi) => {
+                                const prevField = fi > 0 ? enabledFields[fi - 1] : null;
+                                const isSecondHalf = field.width === "half" && prevField && prevField.width === "half";
+                                const inputEl = (
+                                  <>
+                                    <label className="block text-sm font-medium mb-2" style={{ color: C.text }}>{field.label}{field.required && <span style={{ color: C.red }}> *</span>}</label>
+                                    {field.type === "textarea" ? (
+                                      <textarea rows={field.type === "textarea" && fi === enabledFields.length - 1 ? 2 : 3} value={checkoutForm[field.id] || ""} onChange={e => { setCheckoutForm(p => ({ ...p, [field.id]: e.target.value })); if (checkoutErrors[field.id]) setCheckoutErrors(p => { const n = { ...p }; delete n[field.id]; return n; }); }} placeholder={field.placeholder} className={"w-full px-4 py-3 rounded-xl border text-sm outline-none transition-all focus:ring-2 focus:ring-[#F49CBB]/40 resize-none" + (checkoutErrors[field.id] ? " border-red-400" : "")} style={{ borderColor: checkoutErrors[field.id] ? undefined : C.light + "66", background: C.bg, color: C.text }} dir={field.dir} />
+                                    ) : (
+                                      <input type={field.type} value={checkoutForm[field.id] || ""} onChange={e => { setCheckoutForm(p => ({ ...p, [field.id]: e.target.value })); if (checkoutErrors[field.id]) setCheckoutErrors(p => { const n = { ...p }; delete n[field.id]; return n; }); }} placeholder={field.placeholder} className={"w-full px-4 py-3 rounded-xl border text-sm outline-none transition-all focus:ring-2 focus:ring-[#F49CBB]/40" + (checkoutErrors[field.id] ? " border-red-400" : "")} style={{ borderColor: checkoutErrors[field.id] ? undefined : C.light + "66", background: C.bg, color: C.text }} dir={field.dir} />
+                                    )}
+                                    {checkoutErrors[field.id] && <p className="text-xs mt-1 text-red-500">{checkoutErrors[field.id]}</p>}
+                                  </>
+                                );
+                                if (isSecondHalf) return null;
+                                const nextField = fi < enabledFields.length - 1 ? enabledFields[fi + 1] : null;
+                                const hasNextHalf = nextField && nextField.width === "half";
+                                if (field.width === "half" && hasNextHalf) {
+                                  return <div key={field.id} className="grid grid-cols-1 sm:grid-cols-2 gap-4"><div>{inputEl}</div><div>{enabledFields[fi + 1] && <label className="block text-sm font-medium mb-2" style={{ color: C.text }}>{enabledFields[fi + 1].label}{enabledFields[fi + 1].required && <span style={{ color: C.red }}> *</span>}</label>}{enabledFields[fi + 1] && enabledFields[fi + 1].type === "textarea" ? (<textarea rows={enabledFields[fi + 1].type === "textarea" && fi + 1 === enabledFields.length - 1 ? 2 : 3} value={checkoutForm[enabledFields[fi + 1].id] || ""} onChange={e => { setCheckoutForm(p => ({ ...p, [enabledFields[fi + 1].id]: e.target.value })); if (checkoutErrors[enabledFields[fi + 1].id]) setCheckoutErrors(p => { const n = { ...p }; delete n[enabledFields[fi + 1].id]; return n; }); }} placeholder={enabledFields[fi + 1].placeholder} className={"w-full px-4 py-3 rounded-xl border text-sm outline-none transition-all focus:ring-2 focus:ring-[#F49CBB]/40 resize-none" + (checkoutErrors[enabledFields[fi + 1].id] ? " border-red-400" : "")} style={{ borderColor: checkoutErrors[enabledFields[fi + 1].id] ? undefined : C.light + "66", background: C.bg, color: C.text }} dir={enabledFields[fi + 1].dir} />) : (<input type={enabledFields[fi + 1].type} value={checkoutForm[enabledFields[fi + 1].id] || ""} onChange={e => { setCheckoutForm(p => ({ ...p, [enabledFields[fi + 1].id]: e.target.value })); if (checkoutErrors[enabledFields[fi + 1].id]) setCheckoutErrors(p => { const n = { ...p }; delete n[enabledFields[fi + 1].id]; return n; }); }} placeholder={enabledFields[fi + 1].placeholder} className={"w-full px-4 py-3 rounded-xl border text-sm outline-none transition-all focus:ring-2 focus:ring-[#F49CBB]/40" + (checkoutErrors[enabledFields[fi + 1].id] ? " border-red-400" : "")} style={{ borderColor: checkoutErrors[enabledFields[fi + 1].id] ? undefined : C.light + "66", background: C.bg, color: C.text }} dir={enabledFields[fi + 1].dir} />)}{checkoutErrors[enabledFields[fi + 1].id] && <p className="text-xs mt-1 text-red-500">{checkoutErrors[enabledFields[fi + 1].id]}</p>}</div></div>;
+                                }
+                                return <div key={field.id}>{inputEl}</div>;
+                              });
+                            })()}
                           </div>
                         </motion.div>
 
@@ -1274,9 +1318,29 @@ export default function HomePage() {
                             ))}
                           </div>
                         </motion.div>
-                      </div>
+                        </>)}
 
-                      {/* Order Summary Sidebar */}
+                        {/* Step 2: Order Review */}
+                        {checkoutStep === 2 && (
+                        <motion.div initial={{ opacity: 0, x: -20 }} animate={{ opacity: 1, x: 0 }} className="bg-white rounded-2xl p-6 shadow-sm">
+                          <div className="flex items-center gap-2 mb-5">
+                            <div className="w-10 h-10 rounded-xl flex items-center justify-center" style={{ background: "linear-gradient(135deg, #FFE0E8, #FFF0F3)" }}>
+                              <ClipboardList className="w-5 h-5" style={{ color: C.red }} />
+                            </div>
+                            <h2 className="text-lg font-bold" style={{ color: C.dark }}>بررسی و تأیید سفارش</h2>
+                          </div>
+                          <div className="flex flex-col gap-4">
+                            <div className="rounded-xl p-4" style={{ background: C.bg }}>
+                              <p className="text-xs font-bold mb-2" style={{ color: C.textL }}>اطلاعات ارسال</p>
+                              {checkoutFields.filter(f => checkoutForm[f.id]).map(f => (
+                                <p key={f.id} className="text-sm" style={{ color: f.id === "name" ? C.text : C.textL }} dir={f.dir}>{f.label}: {checkoutForm[f.id]}</p>
+                              ))}
+                            </div>
+                            <button onClick={() => setCheckoutStep(1)} className="text-sm font-bold cursor-pointer" style={{ color: C.red }}>ویرایش اطلاعات</button>
+                          </div>
+                        </motion.div>
+                        )}
+                      </div>
                       <div className="md:col-span-2">
                         <motion.div initial={{ opacity: 0, y: 20 }} animate={{ opacity: 1, y: 0 }} transition={{ delay: 0.3, duration: 0.5 }} className="bg-white rounded-2xl p-5 shadow-sm sticky top-24">
                           <h2 className="font-bold text-base mb-4" style={{ color: C.dark }}>خلاصه سفارش</h2>
@@ -1289,9 +1353,9 @@ export default function HomePage() {
                                   </div>
                                   <div className="flex-1 min-w-0">
                                     <p className="text-xs font-bold truncate" style={{ color: C.text }}>{item.name}</p>
-                                    <p className="text-[10px]" style={{ color: C.textL + "88" }}>تعداد: {item.qty} | قیمت واحد: {item.price}</p>
+                                    <p className="text-[10px]" style={{ color: C.textL + "88" }}>تعداد: {item.qty} | قیمت واحد: {formatPrice(item.price)}</p>
                                   </div>
-                                  <span className="text-xs font-bold shrink-0" style={{ color: C.dark }}>{toFa(parsePrice(item.price) * item.qty)}</span>
+                                  <span className="text-xs font-bold shrink-0" style={{ color: C.dark }}>{formatPriceNum(parsePrice(item.price) * item.qty)}</span>
                                 </div>
                               );
                             })}
@@ -1299,19 +1363,19 @@ export default function HomePage() {
                           <div className="border-t pt-4 flex flex-col gap-2" style={{ borderColor: C.light + "33" }}>
                             <div className="flex items-center justify-between text-sm">
                               <span style={{ color: C.textL }}>جمع کالاها</span>
-                              <span className="font-bold" style={{ color: C.text }}>{cartTotal.toLocaleString("fa-IR")}</span>
+                              <span className="font-bold" style={{ color: C.text }}>{formatPriceNum(cartTotal)}</span>
                             </div>
                             <div className="flex items-center justify-between text-sm">
                               <span style={{ color: C.textL }}>هزینه ارسال</span>
-                              <span className="font-bold text-xs px-2 py-0.5 rounded-full text-white" style={{ background: cartTotal >= 500000 ? "#22c55e" : C.pink }}>{cartTotal >= 500000 ? "رایگان" : "۴۵,۰۰۰"}</span>
+                              <span className="font-bold text-xs px-2 py-0.5 rounded-full text-white" style={{ background: cartTotal >= paySettings.shippingFreeMin ? "#22c55e" : C.pink }}>{cartTotal >= paySettings.shippingFreeMin ? "رایگان" : formatPriceNum(paySettings.shippingCost)}</span>
                             </div>
                             <div className="border-t pt-3 mt-1 flex items-center justify-between" style={{ borderColor: C.light + "33" }}>
                               <span className="font-bold" style={{ color: C.dark }}>مبلغ نهایی</span>
-                              <span className="text-lg font-extrabold" style={{ color: C.dark }}>{(cartTotal + (cartTotal >= 500000 ? 0 : 45000)).toLocaleString("fa-IR")}</span>
+                              <span className="text-lg font-extrabold" style={{ color: C.dark }}>{formatPriceNum(cartTotal + (cartTotal >= paySettings.shippingFreeMin ? 0 : paySettings.shippingCost))}</span>
                             </div>
                           </div>
-                          <button onClick={() => { saveCheckout(); setCheckoutDone(true); }} className="w-full mt-5 flex items-center justify-center gap-2 py-3.5 rounded-xl text-white font-bold text-base hover:opacity-90 transition-opacity shadow-lg cursor-pointer" style={{ background: gradV }}>
-                            <CheckCircle className="w-5 h-5" />ثبت و پرداخت سفارش
+                          <button onClick={() => { if (checkoutStep === 1) { const errors: Record<string, string> = {}; checkoutFields.filter(f => f.required && f.enabled).forEach(f => { if (!checkoutForm[f.id] || !checkoutForm[f.id].trim()) errors[f.id] = f.label + " الزامی است"; }); if (Object.keys(errors).length > 0) { setCheckoutErrors(errors); return; } setCheckoutErrors({}); setCheckoutStep(2); } else { if (!isLoggedIn) { setToast(""); setTimeout(() => setToast("لطفاً ابتدا وارد حساب کاربری شوید"), 10); setShowAuth(true); setAuthMode("login"); return; } if (saveCheckout()) setCheckoutDone(true); } }} className="w-full mt-5 flex items-center justify-center gap-2 py-3.5 rounded-xl text-white font-bold text-base hover:opacity-90 transition-opacity shadow-lg cursor-pointer" style={{ background: gradV }}>
+                            <CheckCircle className="w-5 h-5" />{checkoutStep === 1 ? "ادامه به مرحله بعد" : "ثبت و پرداخت سفارش"}
                           </button>
                           <button onClick={() => navTo("cart")} className="w-full mt-2 py-2.5 rounded-xl font-bold text-xs border-2 hover:bg-white/50 transition-colors cursor-pointer" style={{ borderColor: C.light, color: C.textL }}>بازگشت به سبد خرید</button>
                           <div className="flex items-center gap-2 mt-4 justify-center">
@@ -1500,8 +1564,8 @@ export default function HomePage() {
       </AnimatePresence>
 
 
-      {/* ADMIN PANEL */}
-      {isAdmin && (
+      {/* ADMIN PANEL - DISABLED */}
+      {false && isAdmin && (
 
         <div className="fixed bottom-6 right-6 z-[70]">
           <div className="bg-white rounded-2xl shadow-2xl p-4 sm:p-5 w-[calc(100vw-3rem)] sm:w-80 max-w-sm max-h-[70vh] sm:max-h-[80vh] overflow-y-auto" dir="rtl">
@@ -1556,7 +1620,7 @@ export default function HomePage() {
                           <img key={ii} src={fixImg(item.img)} alt="" className="w-6 h-6 rounded object-cover" />
                         ))}
                         <span className="text-[10px]" style={{ color: C.textL }}>{order.items.length} کالا</span>
-                        <span className="text-[10px] font-bold mr-auto" style={{ color: C.dark }}>{order.total.toLocaleString("fa-IR")} تومان</span>
+                        <span className="text-[10px] font-bold mr-auto" style={{ color: C.dark }}>{formatPriceNum(order.total)}</span>
                       </div>
                       <div className="flex items-center gap-2 mt-1.5">
                         <span className="text-[10px]" style={{ color: C.textL }}>{order.date}</span>
@@ -1620,8 +1684,8 @@ export default function HomePage() {
           )}
 
 
-      {/* Admin floating button - only when logged in as admin */}
-      {isAdmin && (
+      {/* Admin floating button - DISABLED */}
+      {false && isAdmin && (
         <div className="fixed bottom-6 right-6 z-[70]">
           <AnimatePresence>
             {adminFabOpen && (
@@ -1752,7 +1816,7 @@ export default function HomePage() {
                           <div className="w-px h-8 bg-white/20" />
                           <div className="text-center">
                             <div className="text-sm sm:text-lg font-extrabold">{userOrders.filter(o => o.phone === userPhone).reduce((s, o) => s + o.total, 0).toLocaleString("fa-IR")}</div>
-                            <div className="text-white/70 text-[10px] sm:text-xs">تومان خرید</div>
+                            <div className="text-white/70 text-[10px] sm:text-xs">{currencyLabel()} خرید</div>
                           </div>
                         </div>
                       </div>
@@ -1816,7 +1880,7 @@ export default function HomePage() {
                             </div>
                             <div className="text-left sm:text-right">
                               <div className="text-xs" style={{ color: C.textL }}>مبلغ کل</div>
-                              <div className="font-extrabold text-lg" style={{ color: C.dark }}>{order.total.toLocaleString("fa-IR")} تومان</div>
+                              <div className="font-extrabold text-lg" style={{ color: C.dark }}>{formatPriceNum(order.total)}</div>
                             </div>
                           </div>
                           <div className="border-t mt-4 pt-3 flex flex-wrap gap-2" style={{ borderColor: C.light + "33" }}>
@@ -1903,86 +1967,21 @@ export default function HomePage() {
 
         {/* ===== ADMIN PAGE ===== */}
         {isAdmin && currentPage === "admin" && (
-          <motion.main key="admin" initial={{ opacity: 0, y: 20 }} animate={{ opacity: 1, y: 0 }} exit={{ opacity: 0, y: -20 }} transition={{ duration: 0.4 }} className="flex-1 pt-24 pb-16">
-            <div className="max-w-7xl mx-auto px-4 sm:px-6 flex gap-6">
-              {/* ===== ADMIN SIDEBAR (Desktop) ===== */}
-              <aside className="hidden md:block w-56 lg:w-60 shrink-0">
-                <div className="sticky top-28 rounded-2xl overflow-hidden shadow-2xl" style={{ background: "#1C1C2E" }}>
-                  <div className="p-4 border-b border-white/10">
-                    <div className="flex items-center gap-2.5">
-                      <div className="w-8 h-8 rounded-lg flex items-center justify-center" style={{ background: "linear-gradient(135deg, #DD2D4A, #F26A8D)" }}><Settings className="w-4 h-4 text-white" /></div>
-                      <span className="text-white/90 text-sm font-bold">منوی مدیریت</span>
-                    </div>
+          <div className="flex min-h-screen" style={{ background: "#fdf8f9" }}>
+            {/* ===== ADMIN SIDEBAR (Desktop - Full Height Right) ===== */}
+            <aside className="hidden md:flex flex-col w-60 shrink-0 fixed right-0 top-0 h-screen z-40" style={{ background: "linear-gradient(180deg, #1a0b1e 0%, #2d0a1a 50%, #1a0b1e 100%)" }}>
+              <div className="p-5 border-b border-white/10 mt-2">
+                <a href="#" onClick={(e) => { e.preventDefault(); navTo("home"); }} className="flex items-center gap-3 cursor-pointer hover:opacity-80 transition-opacity">
+                  <img src={siteHeader.logoUrl} alt={siteHeader.brandName} className="w-10 h-10 rounded-full object-cover" />
+                  <div>
+                    <span className="text-white text-sm font-bold block">{siteHeader.brandName}</span>
+                    <span className="text-white/40 text-[10px]">پنل مدیریت</span>
                   </div>
-                  <nav className="p-2.5 flex flex-col gap-0.5">
-                    {[
-                      { key: "slides", label: "اسلایدر", Icon: Image },
-                      { key: "categories", label: "دسته‌بندی‌ها", Icon: LayoutGrid },
-                      { key: "features", label: "ویژگی‌ها", Icon: BadgeCheck },
-                      { key: "reviews", label: "نظرات", Icon: MessageSquare },
-                      { key: "products", label: "محصولات", Icon: Package },
-                      { key: "orders", label: "سفارشات", Icon: ClipboardList },
-                      { key: "users", label: "کاربران", Icon: UserPlus },
-                      { key: "about", label: "درباره ما", Icon: FileText },
-                      { key: "contact", label: "تماس با ما", Icon: Phone },
-                      { key: "header", label: "هدر", Icon: Menu },
-                      { key: "footer", label: "فوتر", Icon: Settings },
-                      { key: "payment", label: "تنظیمات پرداخت", Icon: Wallet },
-                      { key: "messages", label: "پیام‌ها", Icon: MessageSquare },
-                    ].map(item => (
-                      <button key={item.key} onClick={() => setAdminSection(item.key)}
-                        className={"flex items-center gap-3 px-4 py-3 rounded-xl text-sm font-medium transition-all cursor-pointer " + (adminSection === item.key ? "text-white shadow-lg" : "text-white/60 hover:text-white/90 hover:bg-white/5")}
-                        style={adminSection === item.key ? { background: "linear-gradient(135deg, #DD2D4A, #F26A8D)" } : {}}>
-                        <item.Icon className="w-[18px] h-[18px] shrink-0" />
-                        <span>{item.label}</span>
-                      </button>
-                    ))}
-                  </nav>
-                  <div className="p-2.5 mt-1 border-t border-white/10">
-                    <button onClick={logoutAdmin} className="w-full flex items-center gap-3 px-4 py-3 rounded-xl text-sm font-medium text-red-400 hover:bg-red-500/10 transition-all cursor-pointer">
-                      <LogOut className="w-[18px] h-[18px] shrink-0" />
-                      <span>خروج از حساب</span>
-                    </button>
-                  </div>
-                </div>
-              </aside>
-              {/* ===== ADMIN CONTENT ===== */}
-              <div className="flex-1 min-w-0">
-              <motion.div initial={{ opacity: 0 }} animate={{ opacity: 1 }} className="flex items-center gap-2 text-sm mb-8" style={{ color: C.textL }}>
-                <a href="#" onClick={(e) => { e.preventDefault(); navTo("home"); }} className="hover:opacity-70 transition-opacity cursor-pointer">خانه</a>
-                <ChevronRight className="w-4 h-4 opacity-40" />
-                <span style={{ color: C.dark }} className="font-medium">پنل مدیریت</span>
-              </motion.div>
-              <motion.div initial={{ opacity: 0, y: 30 }} animate={{ opacity: 1, y: 0 }} transition={{ duration: 0.6 }}>
-                <div className="flex items-center gap-3 mb-3">
-                  <h1 className="text-3xl sm:text-4xl font-extrabold" style={{ color: C.dark }}>پنل مدیریت</h1>
-                  <span className="px-3 py-0.5 rounded-full text-white text-xs font-bold" style={{ background: C.dark }}>ادمین</span>
-                </div>
-                <div className="w-16 h-1 rounded-full mb-6" style={{ background: gradH }} />
-              </motion.div>
-
-              {/* Stats Grid */}
-              <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-5 gap-3 sm:gap-4 mb-8">
-                {[
-                  { n: toFa(products.length), l: "محصول", icon: <Package className="w-5 h-5" />, bg: gradH },
-                  { n: toFa(userOrders.length), l: "سفارش", icon: <ShoppingBag className="w-5 h-5" />, bg: "linear-gradient(135deg, #3B82F6, #60A5FA)" },
-                  { n: toFa(heroSlides.length), l: "اسلاید", icon: <Eye className="w-5 h-5" />, bg: "linear-gradient(135deg, #880D1E, #DD2D4A)" },
-                  { n: toFa(cats.length), l: "دسته‌بندی", icon: <Sparkles className="w-5 h-5" />, bg: "linear-gradient(135deg, #F59E0B, #FBBF24)" },
-                  { n: toFa(reviews.length), l: "نظر", icon: <Star className="w-5 h-5" />, bg: "linear-gradient(135deg, #F26A8D, #F49CBB)" },
-                ].map((s, i) => (
-                  <motion.div key={i} initial={{ opacity: 0, y: 20 }} animate={{ opacity: 1, y: 0 }} transition={{ delay: 0.05 * i }} className="bg-white rounded-2xl p-5 shadow-sm">
-                    <div className="flex items-center justify-between mb-3">
-                      <div className="w-10 h-10 rounded-xl flex items-center justify-center text-white" style={{ background: s.bg }}>{s.icon}</div>
-                    </div>
-                    <div className="text-2xl font-extrabold" style={{ color: C.dark }}>{s.n}</div>
-                    <div className="text-xs" style={{ color: C.textL }}>{s.l}</div>
-                  </motion.div>
-                ))}
+                </a>
               </div>
-
-              {/* Mobile Admin Tabs */}
-              <div className="md:hidden flex gap-2 mb-6 overflow-x-auto pb-2 -mx-1 px-1">
+              <nav className="p-2.5 flex-1 flex flex-col gap-0.5 overflow-y-auto">
                 {[
+                  { key: "dashboard", label: "داشبورد", Icon: LayoutGrid },
                   { key: "slides", label: "اسلایدر", Icon: Image },
                   { key: "categories", label: "دسته‌بندی‌ها", Icon: LayoutGrid },
                   { key: "features", label: "ویژگی‌ها", Icon: BadgeCheck },
@@ -1995,6 +1994,120 @@ export default function HomePage() {
                   { key: "header", label: "هدر", Icon: Menu },
                   { key: "footer", label: "فوتر", Icon: Settings },
                   { key: "payment", label: "تنظیمات پرداخت", Icon: Wallet },
+                  { key: "formfields", label: "فیلدهای فرم سفارش", Icon: ListChecks },
+                  { key: "messages", label: "پیام‌ها", Icon: MessageSquare },
+                ].map(item => (
+                  <button key={item.key} onClick={() => setAdminSection(item.key)}
+                    className={"flex items-center gap-3 px-4 py-3 rounded-xl text-sm font-medium transition-all cursor-pointer " + (adminSection === item.key ? "text-white shadow-lg" : "text-white/60 hover:text-white/90 hover:bg-white/5")}
+                    style={adminSection === item.key ? { background: "linear-gradient(135deg, #ff4d6d, #c9184a)" } : {}}>
+                    <item.Icon className="w-[18px] h-[18px] shrink-0" />
+                    <span>{item.label}</span>
+                  </button>
+                ))}
+              </nav>
+              <div className="p-2.5 border-t border-white/10">
+                <button onClick={() => { logoutAdmin(); navTo("home"); }} className="w-full flex items-center gap-3 px-4 py-3 rounded-xl text-sm font-medium text-red-400 hover:bg-red-500/10 transition-all cursor-pointer">
+                  <LogOut className="w-[18px] h-[18px] shrink-0" />
+                  <span>خروج از حساب</span>
+                </button>
+              </div>
+            </aside>
+
+            {/* ===== ADMIN CONTENT ===== */}
+            <div className="flex-1 md:mr-60 min-h-screen">
+            <div className="max-w-5xl mx-auto px-4 sm:px-6 pt-8 pb-16">
+              <motion.div initial={{ opacity: 0 }} animate={{ opacity: 1 }} className="flex items-center gap-2 text-sm mb-8" style={{ color: C.textL }}>
+                <a href="#" onClick={(e) => { e.preventDefault(); navTo("home"); }} className="hover:opacity-70 transition-opacity cursor-pointer">خانه</a>
+                <ChevronRight className="w-4 h-4 opacity-40" />
+                <span style={{ color: C.dark }} className="font-medium">{adminSection === "dashboard" ? "داشبورد" : "پنل مدیریت"}</span>
+              </motion.div>
+
+              {adminSection === "dashboard" && (
+              <>
+              <motion.div initial={{ opacity: 0, y: 30 }} animate={{ opacity: 1, y: 0 }} transition={{ duration: 0.6 }}>
+                <div className="flex items-center gap-3 mb-3">
+                  <h1 className="text-3xl sm:text-4xl font-extrabold" style={{ color: C.dark }}>داشبورد</h1>
+                  <span className="px-3 py-0.5 rounded-full text-white text-xs font-bold" style={{ background: C.dark }}>ادمین</span>
+                </div>
+                <div className="w-16 h-1 rounded-full mb-6" style={{ background: gradH }} />
+              </motion.div>
+
+              {/* Stats Grid */}
+              <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-5 gap-4 mb-8">
+                {[
+                  { n: toFa(products.length), l: "محصول", icon: <Package className="w-5 h-5" />, iconBg: "#FEE2E2", iconColor: "#EF4444" },
+                  { n: toFa(userOrders.length), l: "سفارش", icon: <ShoppingBag className="w-5 h-5" />, iconBg: "#DBEAFE", iconColor: "#3B82F6" },
+                  { n: toFa(heroSlides.length), l: "اسلاید", icon: <Eye className="w-5 h-5" />, iconBg: "#FCE7F3", iconColor: "#EC4899" },
+                  { n: toFa(cats.length), l: "دسته‌بندی", icon: <Sparkles className="w-5 h-5" />, iconBg: "#FEF3C7", iconColor: "#F59E0B" },
+                  { n: toFa(reviews.length), l: "نظر", icon: <Star className="w-5 h-5" />, iconBg: "#D1FAE5", iconColor: "#10B981" },
+                ].map((s, i) => (
+                  <motion.div key={i} initial={{ opacity: 0, y: 20 }} animate={{ opacity: 1, y: 0 }} transition={{ delay: 0.05 * i }} className="bg-white rounded-2xl p-6 shadow-[0_4px_20px_rgba(0,0,0,0.05)] relative overflow-hidden">
+                    <div className="absolute top-4 left-4 w-11 h-11 rounded-full flex items-center justify-center" style={{ background: s.iconBg, color: s.iconColor }}>{s.icon}</div>
+                    <div className="text-3xl font-extrabold mt-2" style={{ color: "#4a0e17" }}>{s.n}</div>
+                    <div className="text-sm mt-1" style={{ color: "#6c757d" }}>{s.l}</div>
+                  </motion.div>
+                ))}
+              </div>
+
+              {/* Recent Orders Card */}
+              <div className="bg-white rounded-2xl p-6 shadow-[0_4px_20px_rgba(0,0,0,0.05)]">
+                <div className="flex items-center justify-between mb-5">
+                  <h2 className="text-lg font-bold" style={{ color: "#4a0e17" }}>آخرین سفارشات</h2>
+                  <button onClick={() => setAdminSection("orders")} className="text-sm font-bold hover:opacity-70 transition-opacity cursor-pointer" style={{ color: "#ef476f" }}>مشاهده همه</button>
+                </div>
+                {userOrders.length === 0 ? (
+                  <p className="text-sm text-center py-8" style={{ color: "#6c757d" }}>سفارشی ثبت نشده است.</p>
+                ) : (
+                  <div className="flex flex-col gap-3">
+                    {userOrders.slice(0, 5).map((order) => (
+                      <div key={order.id} className="flex items-center gap-4 p-3 rounded-xl hover:bg-gray-50 transition-colors">
+                        <div className="w-12 h-12 rounded-xl overflow-hidden shrink-0 flex items-center justify-center" style={{ background: "#fdf2f8" }}>
+                          {order.items[0] && <img src={fixImg(order.items[0].img)} alt="" className="w-10 h-10 object-contain" />}
+                        </div>
+                        <div className="flex-1 min-w-0">
+                          <p className="text-sm font-bold truncate" style={{ color: "#4a0e17" }}>{order.id}</p>
+                          <p className="text-[11px]" style={{ color: "#6c757d" }}>{order.date} — {order.items.length} کالا</p>
+                        </div>
+                        <div className="text-left shrink-0">
+                          <p className="text-sm font-extrabold" style={{ color: "#4a0e17" }}>{formatPriceNum(order.total)}</p>
+                          <span className="text-[10px] font-bold px-2 py-0.5 rounded-full" style={{ background: "#fce7f3", color: "#ef476f" }}>{order.status}</span>
+                        </div>
+                      </div>
+                    ))}
+                  </div>
+                )}
+              </div>
+              </>
+              )}
+
+              {/* Non-dashboard sections */}
+              {adminSection !== "dashboard" && (
+              <>
+              <motion.div initial={{ opacity: 0, y: 30 }} animate={{ opacity: 1, y: 0 }} transition={{ duration: 0.6 }}>
+                <div className="flex items-center gap-3 mb-3">
+                  <h1 className="text-3xl sm:text-4xl font-extrabold" style={{ color: C.dark }}>پنل مدیریت</h1>
+                  <span className="px-3 py-0.5 rounded-full text-white text-xs font-bold" style={{ background: C.dark }}>ادمین</span>
+                </div>
+                <div className="w-16 h-1 rounded-full mb-6" style={{ background: gradH }} />
+              </motion.div>
+
+              {/* Mobile Admin Tabs */}
+              <div className="md:hidden flex gap-2 mb-6 overflow-x-auto pb-2 -mx-1 px-1">
+                {[
+                  { key: "dashboard", label: "داشبورد", Icon: LayoutGrid },
+                  { key: "slides", label: "اسلایدر", Icon: Image },
+                  { key: "categories", label: "دسته‌بندی‌ها", Icon: LayoutGrid },
+                  { key: "features", label: "ویژگی‌ها", Icon: BadgeCheck },
+                  { key: "reviews", label: "نظرات", Icon: MessageSquare },
+                  { key: "products", label: "محصولات", Icon: Package },
+                  { key: "orders", label: "سفارشات", Icon: ClipboardList },
+                  { key: "users", label: "کاربران", Icon: UserPlus },
+                  { key: "about", label: "درباره ما", Icon: FileText },
+                  { key: "contact", label: "تماس با ما", Icon: Phone },
+                  { key: "header", label: "هدر", Icon: Menu },
+                  { key: "footer", label: "فوتر", Icon: Settings },
+                  { key: "payment", label: "تنظیمات پرداخت", Icon: Wallet },
+                  { key: "formfields", label: "فیلدهای فرم سفارش", Icon: ListChecks },
                   { key: "messages", label: "پیام‌ها", Icon: MessageSquare },
                 ].map(item => (
                   <button key={item.key} onClick={() => setAdminSection(item.key)}
@@ -2216,7 +2329,7 @@ export default function HomePage() {
                         <div className="flex-1 min-w-0">
                           <p className="text-xs font-bold truncate" style={{ color: C.text }}>{pr.name}</p>
                           <p className="text-[10px]" style={{ color: C.textL }}>{pr.cat}</p>
-                          <p className="text-xs font-extrabold" style={{ color: C.dark }}>{pr.price} تومان</p>
+                          <p className="text-xs font-extrabold" style={{ color: C.dark }}>{formatPrice(pr.price)}</p>
                         </div>
                         <button onClick={() => editProduct(i)} className="w-8 h-8 rounded-lg flex items-center justify-center hover:bg-blue-50 transition-colors shrink-0 cursor-pointer" style={{ color: "#3B82F6" }}><Edit3 className="w-4 h-4" /></button>
                         <button onClick={() => deleteProduct(i)} className="w-8 h-8 rounded-lg flex items-center justify-center hover:bg-red-50 transition-colors shrink-0 cursor-pointer" style={{ color: C.red }}><Trash2 className="w-4 h-4" /></button>
@@ -2243,7 +2356,7 @@ export default function HomePage() {
                               <span className="text-xs" style={{ color: C.textL }}>{order.date}</span>
                             </div>
                             <div className="flex items-center gap-3">
-                              <span className="text-sm font-extrabold" style={{ color: C.dark }}>{order.total.toLocaleString("fa-IR")} تومان</span>
+                              <span className="text-sm font-extrabold" style={{ color: C.dark }}>{formatPriceNum(order.total)}</span>
                               <span className="text-xs font-bold px-3 py-1 rounded-full text-white" style={{ background: order.status === "تحویل داده شد" ? "#22c55e" : order.status === "ارسال شد" ? "#3B82F6" : C.pink }}>{order.status}</span>
                               <button onClick={() => { const ns = [...userOrders]; ns[oi].status = ns[oi].status === "در حال پردازش" ? "ارسال شد" : "تحویل داده شد"; setUserOrders(ns); localStorage.setItem("cb_orders", JSON.stringify(ns)); }} className="text-xs font-bold px-3 py-1.5 rounded-lg cursor-pointer" style={{ color: "#fff", background: "#3B82F6" }}>تغییر وضعیت</button>
                             </div>
@@ -2550,28 +2663,92 @@ export default function HomePage() {
                         <div><label className="block text-xs font-medium mb-1" style={{ color: C.textL }}>توضیحات</label><input type="text" value={paySettings.codDesc} onChange={e => setPaySettings(p => ({ ...p, codDesc: e.target.value }))} className="w-full px-3 py-2.5 rounded-xl border text-sm outline-none focus:ring-2 focus:ring-[#F49CBB]/40" style={{ borderColor: C.light + "66", color: C.text }} /></div>
                       </div>
                     </div>
-                    {/* Shipping Settings */}
+                    {/* Currency Settings */}
+                    <div className="rounded-2xl border p-5 flex flex-col gap-4" style={{ borderColor: C.light + "44" }}>
+                      <div className="flex items-center gap-2.5">
+                        <div className="w-9 h-9 rounded-lg flex items-center justify-center" style={{ background: "linear-gradient(135deg, #8B5CF6, #A78BFA)" }}><Wallet className="w-4.5 h-4.5 text-white" /></div>
+                        <span className="font-bold text-sm" style={{ color: C.dark }}>واحد پول</span>
+                      </div>
+                      <div className="grid grid-cols-3 gap-2">
+                        {[{v:"toman",l:"تومان"},{v:"rial",l:"ریال"},{v:"dollar",l:"دلار $"}].map(c => (
+                          <button key={c.v} onClick={() => setCurrency(c.v)} className={"py-2.5 rounded-xl text-sm font-bold border-2 transition-all cursor-pointer " + (currency === c.v ? "text-white" : "")} style={{ borderColor: currency === c.v ? C.red : C.light + "66", background: currency === c.v ? C.red : "white", color: currency === c.v ? "white" : C.textL }}>{c.l}</button>
+                        ))}
+                      </div>
+                      {currency === "dollar" && (
+                        <div>
+                          <label className="block text-xs font-medium mb-1" style={{ color: C.textL }}>نرخ دلار (تومان)</label>
+                          <input type="number" value={dollarRate} onChange={e => setDollarRate(parseInt(e.target.value) || 1)} className="w-full px-3 py-2.5 rounded-xl border text-sm outline-none focus:ring-2 focus:ring-[#F49CBB]/40" style={{ borderColor: C.light + "66", color: C.text, direction: "ltr", textAlign: "left" }} />
+                          <p className="text-[10px] mt-1" style={{ color: C.textL + "88" }}>هر ۱ دلار = {dollarRate.toLocaleString("fa-IR")} تومان</p>
+                        </div>
+                      )}
+                      <div className="rounded-xl p-3 mt-1" style={{ background: C.bg }}>
+                        <p className="text-xs" style={{ color: C.textL }}>واحد پول فعال: <span className="font-bold" style={{ color: C.dark }}>{currency === "toman" ? "تومان" : currency === "rial" ? "ریال" : "دلار ($)"}</span> — تمام قیمت‌های سایت با این واحد نمایش داده می‌شوند.</p>
+                      </div>
+                    </div>
+{/* Shipping Settings */}
                     <div className="rounded-2xl border p-5 flex flex-col gap-4" style={{ borderColor: C.light + "44" }}>
                       <div className="flex items-center gap-2.5">
                         <div className="w-9 h-9 rounded-lg flex items-center justify-center" style={{ background: "linear-gradient(135deg, #22c55e, #4ade80)" }}><Truck className="w-4.5 h-4.5 text-white" /></div>
                         <span className="font-bold text-sm" style={{ color: C.dark }}>تنظیمات ارسال</span>
                       </div>
                       <div className="flex flex-col gap-3">
-                        <div><label className="block text-xs font-medium mb-1" style={{ color: C.textL }}>حداقل خرید برای ارسال رایگان (تومان)</label><input type="number" value={paySettings.shippingFreeMin} onChange={e => setPaySettings(p => ({ ...p, shippingFreeMin: parseInt(e.target.value) || 0 }))} className="w-full px-3 py-2.5 rounded-xl border text-sm outline-none focus:ring-2 focus:ring-[#F49CBB]/40" style={{ borderColor: C.light + "66", color: C.text, direction: "ltr", textAlign: "left" }} /></div>
-                        <div><label className="block text-xs font-medium mb-1" style={{ color: C.textL }}>هزینه ارسال (تومان)</label><input type="number" value={paySettings.shippingCost} onChange={e => setPaySettings(p => ({ ...p, shippingCost: parseInt(e.target.value) || 0 }))} className="w-full px-3 py-2.5 rounded-xl border text-sm outline-none focus:ring-2 focus:ring-[#F49CBB]/40" style={{ borderColor: C.light + "66", color: C.text, direction: "ltr", textAlign: "left" }} /></div>
+                        <div><label className="block text-xs font-medium mb-1" style={{ color: C.textL }}>حداقل خرید برای ارسال رایگان (واحد پول)</label><input type="number" value={paySettings.shippingFreeMin} onChange={e => setPaySettings(p => ({ ...p, shippingFreeMin: parseInt(e.target.value) || 0 }))} className="w-full px-3 py-2.5 rounded-xl border text-sm outline-none focus:ring-2 focus:ring-[#F49CBB]/40" style={{ borderColor: C.light + "66", color: C.text, direction: "ltr", textAlign: "left" }} /></div>
+                        <div><label className="block text-xs font-medium mb-1" style={{ color: C.textL }}>هزینه ارسال (واحد پول)</label><input type="number" value={paySettings.shippingCost} onChange={e => setPaySettings(p => ({ ...p, shippingCost: parseInt(e.target.value) || 0 }))} className="w-full px-3 py-2.5 rounded-xl border text-sm outline-none focus:ring-2 focus:ring-[#F49CBB]/40" style={{ borderColor: C.light + "66", color: C.text, direction: "ltr", textAlign: "left" }} /></div>
                         <div className="rounded-xl p-3 mt-1" style={{ background: C.bg }}>
-                          <p className="text-xs" style={{ color: C.textL }}>ارسسال برای خریدهای بالای <span className="font-bold" style={{ color: C.dark }}>{paySettings.shippingFreeMin.toLocaleString("fa-IR")}</span> تومان رایگان و در غیر این صورت <span className="font-bold" style={{ color: C.dark }}>{paySettings.shippingCost.toLocaleString("fa-IR")}</span> تومان خواهد بود.</p>
+                          <p className="text-xs" style={{ color: C.textL }}>ارسال برای خریدهای بالای <span className="font-bold" style={{ color: C.dark }}>{formatPriceNum(paySettings.shippingFreeMin)}</span> رایگان و در غیر این صورت <span className="font-bold" style={{ color: C.dark }}>{formatPriceNum(paySettings.shippingCost)}</span> خواهد بود.</p>
                         </div>
                       </div>
                     </div>
                   </div>
                   <div className="mt-6 text-center">
-                    <button onClick={() => { localStorage.setItem("cb_pay_settings", JSON.stringify(paySettings)); setToast(""); setTimeout(() => setToast("تنظیمات پرداخت ذخیره شد!"), 10); }} className="inline-flex items-center gap-2 px-8 py-3 rounded-full text-white font-bold text-sm hover:opacity-90 transition-opacity cursor-pointer shadow-lg" style={{ background: gradH }}><Save className="w-4 h-4" />ذخیره تنظیمات</button>
+                    <button onClick={() => { localStorage.setItem("cb_pay_settings", JSON.stringify(paySettings)); localStorage.setItem("cb_currency", JSON.stringify(currency)); localStorage.setItem("cb_dollar_rate", JSON.stringify(dollarRate)); setToast(""); setTimeout(() => setToast("تنظیمات پرداخت و واحد پول ذخیره شد!"), 10); }} className="inline-flex items-center gap-2 px-8 py-3 rounded-full text-white font-bold text-sm hover:opacity-90 transition-opacity cursor-pointer shadow-lg" style={{ background: gradH }}><Save className="w-4 h-4" />ذخیره تنظیمات</button>
                   </div>
                 </motion.div>
               )}
 
-              {adminSection === "messages" && (
+                            {adminSection === "formfields" && (
+                <motion.div initial={{ opacity: 0, y: 20 }} animate={{ opacity: 1, y: 0 }} className="bg-white rounded-2xl p-6 shadow-sm">
+                  <div className="flex items-center justify-between mb-5">
+                    <div className="flex items-center gap-3">
+                      <div className="w-10 h-10 rounded-xl flex items-center justify-center" style={{ background: gradH }}><ListChecks className="w-5 h-5 text-white" /></div>
+                      <h2 className="text-lg font-bold" style={{ color: C.dark }}>فیلدهای فرم تکمیل سفارش</h2>
+                    </div>
+                    <button onClick={() => { setEditFormField(null); setShowFormFieldForm(true); }} className="flex items-center gap-2 px-4 py-2 rounded-xl text-white text-sm font-bold hover:opacity-90 transition-opacity cursor-pointer" style={{ background: gradH }}><Plus className="w-4 h-4" />افزودن فیلد</button>
+                  </div>
+                  <p className="text-xs mb-4" style={{ color: C.textL + "aa" }}>فیلدهایی که کاربر هنگام تکمیل سفارش پر می‌کند. می‌توانید افزودن، حذف، ویرایش و جابجایی کنید.</p>
+                  <div className="flex flex-col gap-3">
+                    {checkoutFields.map((field, i) => (
+                      <div key={field.id} className="flex items-center gap-3 p-3.5 rounded-xl border" style={{ borderColor: C.light + "44" }}>
+                        <div className="flex flex-col gap-0.5 shrink-0">
+                          <button onClick={() => { if (i > 0) { const ns = [...checkoutFields]; [ns[i], ns[i-1]] = [ns[i-1], ns[i]]; setCheckoutFields(ns); } }} disabled={i === 0} className={"w-6 h-6 rounded flex items-center justify-center cursor-pointer " + (i === 0 ? "opacity-20 cursor-not-allowed" : "hover:bg-pink-50")} style={{ color: C.dark }}><ChevronUp className="w-4 h-4" /></button>
+                          <button onClick={() => { if (i < checkoutFields.length - 1) { const ns = [...checkoutFields]; [ns[i], ns[i+1]] = [ns[i+1], ns[i]]; setCheckoutFields(ns); } }} disabled={i === checkoutFields.length - 1} className={"w-6 h-6 rounded flex items-center justify-center cursor-pointer " + (i === checkoutFields.length - 1 ? "opacity-20 cursor-not-allowed" : "hover:bg-pink-50")} style={{ color: C.dark }}><ChevronDown className="w-4 h-4" /></button>
+                        </div>
+                        <div className={"flex-1 min-w-0" + (field.enabled ? "" : " opacity-50")}>
+                          <div className="flex items-center gap-2">
+                            <span className="text-sm font-bold" style={{ color: field.enabled ? C.dark : C.textL }}>{field.label}</span>
+                            {field.required && <span className="px-1.5 py-0.5 rounded text-[10px] font-bold text-white" style={{ background: C.red }}>ضروری</span>}
+                            {!field.enabled && <span className="px-1.5 py-0.5 rounded text-[10px] font-bold" style={{ background: "#f3f4f6", color: "#9ca3af" }}>غیرفعال</span>}
+                          </div>
+                          <div className="flex items-center gap-2 mt-1">
+                            <span className="text-[10px] px-1.5 py-0.5 rounded-full" style={{ background: C.bg, color: C.textL }}>{field.type === "textarea" ? "متن بلند" : field.type === "tel" ? "شماره" : field.type === "number" ? "عدد" : "متن"}</span>
+                            <span className="text-[10px] px-1.5 py-0.5 rounded-full" style={{ background: C.bg, color: C.textL }}>{field.width === "half" ? "نیم‌عرض" : "تمام‌عرض"}</span>
+                            <span className="text-[10px] px-1.5 py-0.5 rounded-full" style={{ background: C.bg, color: C.textL }}>{field.dir === "ltr" ? "چپ‌به‌راست" : "راست‌به‌چپ"}</span>
+                          </div>
+                        </div>
+                        <button onClick={() => setCheckoutFields(p => p.map((f, j) => j === i ? { ...f, enabled: !f.enabled } : f))} className={"relative w-11 h-6 rounded-full transition-colors cursor-pointer shrink-0 " + (field.enabled ? "" : "bg-gray-200")} style={field.enabled ? { background: "#22c55e" } : {}}><div className={"absolute top-0.5 w-5 h-5 rounded-full bg-white shadow transition-all " + (field.enabled ? "left-0.5" : "left-[22px]")} /></button>
+                        <button onClick={() => { setEditFormField(field); setShowFormFieldForm(true); }} className="w-8 h-8 rounded-lg flex items-center justify-center hover:bg-pink-50 transition-colors cursor-pointer shrink-0" style={{ color: C.textL }}><Edit3 className="w-4 h-4" /></button>
+                        <button onClick={() => { if (!confirm("فیلد حذف شود؟")) return; setCheckoutFields(p => p.filter((_, j) => j !== i)); }} className="w-8 h-8 rounded-lg flex items-center justify-center hover:bg-red-50 transition-colors cursor-pointer shrink-0 text-red-400"><Trash2 className="w-4 h-4" /></button>
+                      </div>
+                    ))}
+                    {checkoutFields.length === 0 && <div className="text-center py-10"><p className="text-sm" style={{ color: C.textL }}>هیچ فیلدی تعریف نشده. روی «افزودن فیلد» کلیک کنید.</p></div>}
+                  </div>
+                  <div className="mt-6 text-center">
+                    <button onClick={() => { localStorage.setItem("cb_checkout_fields", JSON.stringify(checkoutFields)); setToast(""); setTimeout(() => setToast("فیلدهای فرم سفارش ذخیره شد!"), 10); }} className="inline-flex items-center gap-2 px-8 py-3 rounded-full text-white font-bold text-sm hover:opacity-90 transition-opacity cursor-pointer shadow-lg" style={{ background: gradH }}><Save className="w-4 h-4" />ذخیره تغییرات</button>
+                  </div>
+                </motion.div>
+              )}
+
+{adminSection === "messages" && (
                 <motion.div initial={{ opacity: 0, y: 20 }} animate={{ opacity: 1, y: 0 }} className="bg-white rounded-2xl p-6 shadow-sm">
                   <div className="flex items-center justify-between mb-5">
                     <div className="flex items-center gap-3">
@@ -2625,6 +2802,47 @@ export default function HomePage() {
                 </motion.div>
               )}
 
+              {/* Form Field Modal */}
+              {showFormFieldForm && (
+                <div className="fixed inset-0 z-[80] flex items-center justify-center bg-black/40 backdrop-blur-sm">
+                  <div className="bg-white rounded-2xl shadow-2xl p-6 w-[90vw] max-w-md max-h-[90vh] overflow-y-auto" dir="rtl">
+                    <div className="flex items-center justify-between mb-5">
+                      <h3 className="font-bold text-lg" style={{ color: C.dark }}>{editFormField ? "ویرایش فیلد" : "افزودن فیلد جدید"}</h3>
+                      <button onClick={() => setShowFormFieldForm(false)} className="w-8 h-8 rounded-full flex items-center justify-center hover:bg-gray-100 transition-colors cursor-pointer" style={{ color: C.textL }}><X className="w-5 h-5" /></button>
+                    </div>
+                    <div className="flex flex-col gap-4">
+                      <div><label className="block text-xs font-medium mb-1" style={{ color: C.text }}>شناسه فیلد (انگلیسی) *</label><input type="text" value={editFormField?.id || ""} onChange={e => setEditFormField(p => p ? { ...p, id: e.target.value.replace(/[^a-zA-Z0-9_]/g, "") } : { id: e.target.value.replace(/[^a-zA-Z0-9_]/g, ""), label: "", placeholder: "", type: "text", required: false, width: "full", dir: "rtl", enabled: true })} placeholder="مثلاً: email" disabled={!!editFormField} className="w-full px-3 py-2.5 rounded-xl border text-sm outline-none focus:ring-2 focus:ring-[#F49CBB]/40 disabled:bg-gray-100 disabled:cursor-not-allowed" style={{ borderColor: C.light + "66", background: "white", color: C.text }} dir="ltr" /></div>
+                      <div><label className="block text-xs font-medium mb-1" style={{ color: C.text }}>نمایش (لیبل) *</label><input type="text" value={editFormField?.label || ""} onChange={e => setEditFormField(p => p ? { ...p, label: e.target.value } : { id: "", label: e.target.value, placeholder: "", type: "text", required: false, width: "full", dir: "rtl", enabled: true })} placeholder="مثلاً: ایمیل" className="w-full px-3 py-2.5 rounded-xl border text-sm outline-none focus:ring-2 focus:ring-[#F49CBB]/40" style={{ borderColor: C.light + "66", background: "white", color: C.text }} /></div>
+                      <div><label className="block text-xs font-medium mb-1" style={{ color: C.text }}>متن راهنما (placeholder)</label><input type="text" value={editFormField?.placeholder || ""} onChange={e => setEditFormField(p => p ? { ...p, placeholder: e.target.value } : { id: "", label: "", placeholder: e.target.value, type: "text", required: false, width: "full", dir: "rtl", enabled: true })} placeholder="مثلاً: email@example.com" className="w-full px-3 py-2.5 rounded-xl border text-sm outline-none focus:ring-2 focus:ring-[#F49CBB]/40" style={{ borderColor: C.light + "66", background: "white", color: C.text }} /></div>
+                      <div className="grid grid-cols-3 gap-3">
+                        <div><label className="block text-xs font-medium mb-1" style={{ color: C.text }}>نوع فیلد</label><select value={editFormField?.type || "text"} onChange={e => setEditFormField(p => p ? { ...p, type: e.target.value as any } : { id: "", label: "", placeholder: "", type: e.target.value as any, required: false, width: "full", dir: "rtl", enabled: true })} className="w-full px-3 py-2.5 rounded-xl border text-sm outline-none focus:ring-2 focus:ring-[#F49CBB]/40" style={{ borderColor: C.light + "66", background: "white", color: C.text }}><option value="text">متن</option><option value="tel">شماره</option><option value="number">عدد</option><option value="textarea">متن بلند</option></select></div>
+                        <div><label className="block text-xs font-medium mb-1" style={{ color: C.text }}>عرض</label><select value={editFormField?.width || "full"} onChange={e => setEditFormField(p => p ? { ...p, width: e.target.value as any } : { id: "", label: "", placeholder: "", type: "text", required: false, width: e.target.value as any, dir: "rtl" })} className="w-full px-3 py-2.5 rounded-xl border text-sm outline-none focus:ring-2 focus:ring-[#F49CBB]/40" style={{ borderColor: C.light + "66", background: "white", color: C.text }}><option value="full">تمام عرض</option><option value="half">نیم عرض</option></select></div>
+                        <div><label className="block text-xs font-medium mb-1" style={{ color: C.text }}>جهت</label><select value={editFormField?.dir || "rtl"} onChange={e => setEditFormField(p => p ? { ...p, dir: e.target.value as any } : { id: "", label: "", placeholder: "", type: "text", required: false, width: "full", dir: e.target.value as any })} className="w-full px-3 py-2.5 rounded-xl border text-sm outline-none focus:ring-2 focus:ring-[#F49CBB]/40" style={{ borderColor: C.light + "66", background: "white", color: C.text }}><option value="rtl">راست به چپ</option><option value="ltr">چپ به راست</option></select></div>
+                      </div>
+                      <div className="flex items-center justify-between p-3 rounded-xl" style={{ background: C.bg }}>
+                        <span className="text-sm font-medium" style={{ color: C.text }}>فیلد ضروری</span>
+                        <button onClick={() => setEditFormField(p => p ? { ...p, required: !p.required } : { id: "", label: "", placeholder: "", type: "text", required: true, width: "full", dir: "rtl" })} className={"relative w-11 h-6 rounded-full transition-colors cursor-pointer " + (editFormField?.required ? "" : "bg-gray-200")} style={editFormField?.required ? { background: C.red } : {}}><div className={"absolute top-0.5 w-5 h-5 rounded-full bg-white shadow transition-all " + (editFormField?.required ? "left-0.5" : "left-[22px]")} /></button>
+                      </div>
+                      <div className="flex gap-3 mt-2">
+                        <button onClick={() => {
+                          if (!editFormField || !editFormField.id.trim() || !editFormField.label.trim()) { return; }
+                          if (editFormField) {
+                            const exists = checkoutFields.findIndex(f => f.id === editFormField.id);
+                            if (exists !== -1) {
+                              const ns = [...checkoutFields]; ns[exists] = editFormField; setCheckoutFields(ns);
+                            } else {
+                              setCheckoutFields(p => [...p, editFormField]);
+                            }
+                          }
+                          setShowFormFieldForm(false);
+                        }} className="flex-1 py-3 rounded-xl text-white font-bold text-sm hover:opacity-90 transition-opacity cursor-pointer" style={{ background: gradH }}>{editFormField && checkoutFields.find(f => f.id === editFormField.id) ? "ذخیره تغییرات" : "افزودن فیلد"}</button>
+                        <button onClick={() => setShowFormFieldForm(false)} className="px-6 py-3 rounded-xl font-bold text-sm border-2 hover:bg-white/50 transition-colors cursor-pointer" style={{ borderColor: C.light, color: C.textL }}>انصراف</button>
+                      </div>
+                    </div>
+                  </div>
+                </div>
+              )}
+
               {/* User Form Modal */}
               {showUserForm && (
                 <div className="fixed inset-0 z-[80] flex items-center justify-center bg-black/40 backdrop-blur-sm">
@@ -2648,6 +2866,9 @@ export default function HomePage() {
                 </div>
               )}
 
+              </> 
+              )}
+
               {/* Logout Admin (Mobile) */}
               <div className="mt-8 text-center md:hidden">
                 <button onClick={logoutAdmin} className="inline-flex items-center gap-2 px-6 py-2.5 rounded-full font-bold text-sm border-2 hover:bg-red-50 transition-colors cursor-pointer" style={{ borderColor: C.red, color: C.red }}>
@@ -2656,7 +2877,7 @@ export default function HomePage() {
               </div>
               </div>
             </div>
-          </motion.main>
+          </div>
         )}
 
       {/* CART DRAWER */}
@@ -2706,7 +2927,7 @@ export default function HomePage() {
                                 <span className="w-6 text-center text-xs font-bold" style={{ color: C.text }}>{item.qty}</span>
                                 <button onClick={() => updateQty(item.idx, 1)} className="w-6 h-6 rounded flex items-center justify-center hover:opacity-70 cursor-pointer" style={{ color: C.dark }}><Plus className="w-3 h-3" /></button>
                               </div>
-                              <span className="font-extrabold text-sm" style={{ color: C.dark }}>{itemTotal.toLocaleString("fa-IR")}</span>
+                              <span className="font-extrabold text-sm" style={{ color: C.dark }}>{formatPriceNum(itemTotal)}</span>
                             </div>
                           </div>
                         </div>
@@ -2718,7 +2939,11 @@ export default function HomePage() {
                   <div className="border-t px-5 py-4 flex flex-col gap-2.5" style={{ borderColor: C.light + "33", background: C.bg }}>
                     <div className="flex items-center justify-between">
                       <span className="text-sm font-medium" style={{ color: C.textL }}>جمع کل:</span>
-                      <span className="text-lg font-extrabold" style={{ color: C.dark }}>{cartTotal.toLocaleString("fa-IR")}</span>
+                      <span className="text-lg font-extrabold" style={{ color: C.dark }}>{formatPriceNum(cartTotal)}</span>
+                    </div>
+                    <div className="flex items-center justify-between">
+                      <span className="text-sm font-medium" style={{ color: C.textL }}>ارسال:</span>
+                      <span className="text-sm font-bold" style={{ color: cartTotal >= paySettings.shippingFreeMin ? "#22c55e" : C.dark }}>{cartTotal >= paySettings.shippingFreeMin ? "رایگان" : formatPriceNum(paySettings.shippingCost)}</span>
                     </div>
                     <button onClick={() => { setCartOpen(false); navTo("checkout"); }} className="w-full flex items-center justify-center gap-2 py-3 rounded-xl text-white font-bold text-sm cursor-pointer" style={{ background: gradV }}>
                       <Send className="w-4 h-4" />ادامه فرایند تسویه
@@ -2735,7 +2960,8 @@ export default function HomePage() {
         )}
       </AnimatePresence>
 
-      {/* FOOTER */}
+      {/* FOOTER - hidden on admin page */}
+      {currentPage !== "admin" && (
       <footer className="bg-white border-t py-8 sm:py-12 mt-auto" style={{ borderColor: C.light + "33" }}>
         <div className="max-w-6xl mx-auto px-4 sm:px-6">
           <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 gap-6 sm:gap-8 mb-8 sm:mb-10">
@@ -2774,6 +3000,7 @@ export default function HomePage() {
           </div>
         </div>
       </footer>
+      )}
 
       {/* TOAST */}
       <AnimatePresence>
