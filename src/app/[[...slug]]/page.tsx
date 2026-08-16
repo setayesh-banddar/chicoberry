@@ -3019,6 +3019,8 @@ export default function HomePage() {
           </motion.button>
         )}
       </AnimatePresence>
+      {/* VERSION TAG - remove after deploy fix */}
+      <div className="fixed top-1 left-1 z-[100] bg-green-500 text-white text-[10px] px-2 py-0.5 rounded font-mono">v3</div>
     </div>
   );
 }
