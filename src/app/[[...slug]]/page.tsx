@@ -630,6 +630,16 @@ export default function HomePage() {
     setMobileMenu(false);
     setCartOpen(false);
     if (productIdx !== undefined) setSelectedProduct(productIdx);
+    if (page === "checkout") {
+      setCheckoutForm(prev => {
+        const next = { ...prev };
+        if (isLoggedIn && userPhone && (!next.phone || !next.phone.trim())) next.phone = userPhone;
+        if (isLoggedIn && userName && (!next.name || !next.name.trim())) next.name = userName;
+        return next;
+      });
+      setCheckoutStep(1);
+      setCheckoutDone(false);
+    }
     window.scrollTo({ top: 0, behavior: "smooth" });
   };
 
