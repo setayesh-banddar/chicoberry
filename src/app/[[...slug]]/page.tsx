@@ -132,7 +132,7 @@ type Product = {
   cat: string;
 };
 type HeroSlide = { img: string; badge: string; t1: string; t2: string; t3: string; desc: string; btn: string; };
-type Order = { id: string; items: { name: string; img: string; qty: number; price: string }[]; total: number; status: string; date: string; address: string; phone: string; };
+type Order = { id: string; items: { name: string; img: string; qty: number; price: string }[]; total: number; status: string; date: string; address: string; phone: string; customerName: string; customerInfo: Record<string, string>; };
 type ContactMessage = { id: string; name: string; phone: string; subject: string; message: string; date: string; reply: string; replyDate: string; };
 type CheckoutFieldConfig = { id: string; label: string; placeholder: string; type: "text" | "tel" | "textarea" | "number"; required: boolean; width: "full" | "half"; dir: "rtl" | "ltr"; enabled: boolean; };
 
@@ -299,6 +299,7 @@ export default function HomePage() {
   const [profileForm, setProfileForm] = useState<{name:string;email:string;pass:string;pass2:string}>({name:"",email:"",pass:"",pass2:""});
   const [editingOrderIdx, setEditingOrderIdx] = useState<number | null>(null);
   const [editAddrVal, setEditAddrVal] = useState("");
+  const [expandedAdminOrder, setExpandedAdminOrder] = useState<string | null>(null);
   const [featIconUploading, setFeatIconUploading] = useState(false);
   const [siteAbout, setSiteAbout] = useState({ title: "درباره چیکوبری", desc: "ما با عشق و علاقه به دنیای عروسک‌ها، مجموعه‌ای از بامزه‌ترین و باکیفیت‌ترین عروسک‌های فانتزی را برای شما گردآوری کرده‌ایم تا لحظات شادی را به عزیزانتان هدیه بدهیم.", story: "چیکوبری از یک علاقه ساده به عروسک‌های فانتزی شروع شد. ما متوجه شدیم که پیدا کردن عروسک‌های ناز و باکیفیت کار ساده‌ای نیست و بسیاری از افراد برای خرید هدیه‌های خاص دچار مشکل هستند.\nبه همین دلیل تصمیم گرفتیم یک فروشگاه تخصصی برای عروسک‌های فانتزی راه‌اندازی کنیم. ما هر محصول را با دقت انتخاب می‌کنیم تا مطمئن باشیم کیفیت و زیبایی آن با استانداردهای بالای چیکوبری همخوانی دارد.\nامروز چیکوبری به یکی از محبوب‌ترین فروشگاه‌های اینستاگرامی در حوزه عروسک‌های فانتزی تبدیل شده و افتخار می‌کنیم که هزاران مشتری راضی داریم.", mission: "ارائه باکیفیت‌ترین عروسک‌های فانتزی با قیمت مناسب و ارسال سریع به سراسر ایران، تا لبخند را به چهره شما و عزیزانتان بیاوریم." });
   const [siteHeader, setSiteHeader] = useState({
@@ -427,6 +428,8 @@ export default function HomePage() {
     if (Object.keys(errors).length > 0) { setCheckoutErrors(errors); return false; }
     setCheckoutErrors({});
     if (!isLoggedIn) return false;
+    const customerInfoObj: Record<string, string> = {};
+    checkoutFields.filter(f => f.enabled && checkoutForm[f.id] && checkoutForm[f.id].trim()).forEach(f => { customerInfoObj[f.label] = checkoutForm[f.id].trim(); });
     const order: Order = {
       id: "CB-" + Date.now().toString(36).toUpperCase(),
       items: cart.map(item => ({ name: item.name, img: item.img, qty: item.qty, price: item.price })),
@@ -435,6 +438,8 @@ export default function HomePage() {
       date: new Date().toLocaleDateString("fa-IR"),
       address: checkoutFields.filter(f => checkoutForm[f.id]).map(f => f.label + ": " + checkoutForm[f.id]).join(" | "),
       phone: checkoutForm.phone,
+      customerName: checkoutForm.name || userName,
+      customerInfo: customerInfoObj,
     };
     const newOrders = [order, ...userOrders];
     setUserOrders(newOrders);
@@ -1608,13 +1613,17 @@ export default function HomePage() {
                 <span className="text-xs font-bold px-2 py-0.5 rounded-full text-white" style={{ background: C.dark }}>{userOrders.length}</span>
               </div>
               {userOrders.length > 0 ? (
-                <div className="flex flex-col gap-2 max-h-48 overflow-y-auto">
+                <div className="flex flex-col gap-2 max-h-80 overflow-y-auto">
                   {userOrders.slice(0, 10).map((order, oi) => (
-                    <div key={order.id} className="p-2 rounded-xl border" style={{ borderColor: C.light + "44" }}>
-                      <div className="flex items-center justify-between mb-1">
-                        <span className="text-[10px] font-bold" style={{ color: C.dark }}>{order.id}</span>
-                        <span className="text-[10px] px-1.5 py-0.5 rounded-full text-white" style={{ background: order.status === "\u062a\u062d\u0648\u06cc\u0644 \u062f\u0627\u062f\u0647 \u0634\u062f" ? "#22c55e" : C.pink }}>{order.status}</span>
+                    <div key={order.id} className="p-2.5 rounded-xl border" style={{ borderColor: C.light + "44" }}>
+                      <div className="flex items-center justify-between mb-1.5">
+                        <div className="flex items-center gap-1.5">
+                          <div className="w-6 h-6 rounded-full flex items-center justify-center text-white text-[9px] font-bold shrink-0" style={{ background: gradH }}>{(order.customerName || "?").charAt(0)}</div>
+                          <span className="text-[10px] font-bold" style={{ color: C.text }}>{order.customerName || "نامشخص"}</span>
+                        </div>
+                        <span className="text-[10px] px-1.5 py-0.5 rounded-full text-white" style={{ background: order.status === "تحویل داده شد" ? "#22c55e" : order.status === "ارسال شد" ? "#3B82F6" : C.pink }}>{order.status}</span>
                       </div>
+                      {order.phone && <p className="text-[10px] mb-1 flex items-center gap-1" style={{ color: C.textL }} dir="ltr"><Phone className="w-2.5 h-2.5" />{order.phone}</p>}
                       <div className="flex items-center gap-1.5">
                         {order.items.slice(0, 3).map((item, ii) => (
                           <img key={ii} src={fixImg(item.img)} alt="" className="w-6 h-6 rounded object-cover" />
@@ -1622,6 +1631,9 @@ export default function HomePage() {
                         <span className="text-[10px]" style={{ color: C.textL }}>{order.items.length} کالا</span>
                         <span className="text-[10px] font-bold mr-auto" style={{ color: C.dark }}>{formatPriceNum(order.total)}</span>
                       </div>
+                      {order.customerInfo && Object.entries(order.customerInfo).some(([l, v]) => l.includes("آدرس") && v) && (
+                        <p className="text-[9px] mt-1 truncate" style={{ color: C.textL }}>{Object.entries(order.customerInfo).filter(([l]) => l.includes("آدرس"))[0][1]}</p>
+                      )}
                       <div className="flex items-center gap-2 mt-1.5">
                         <span className="text-[10px]" style={{ color: C.textL }}>{order.date}</span>
                         <button onClick={() => { const ns = [...userOrders]; ns[oi].status = ns[oi].status === "در حال پردازش" ? "ارسال شد" : "تحویل داده شد"; setUserOrders(ns); localStorage.setItem("cb_orders", JSON.stringify(ns)); }} className="text-[10px] font-bold cursor-pointer" style={{ color: "#3B82F6" }}>تغییر وضعیت</button>
@@ -2347,28 +2359,107 @@ export default function HomePage() {
                   {userOrders.length === 0 ? (
                     <p className="text-sm text-center py-8" style={{ color: C.textL }}>سفارشی ثبت نشده است.</p>
                   ) : (
-                    <div className="flex flex-col gap-4">
+                    <div className="flex flex-col gap-5">
                       {userOrders.map((order, oi) => (
-                        <div key={order.id} className="p-4 rounded-xl border" style={{ borderColor: C.light + "44" }}>
-                          <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2 mb-3">
+                        <div key={order.id} className="rounded-xl border overflow-hidden" style={{ borderColor: C.light + "44" }}>
+                          {/* Header Row */}
+                          <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2 p-4 pb-3" style={{ background: "linear-gradient(135deg, #FFF5F7, white)" }}>
                             <div className="flex items-center gap-3">
-                              <span className="text-sm font-bold" style={{ color: C.dark }}>{order.id}</span>
-                              <span className="text-xs" style={{ color: C.textL }}>{order.date}</span>
+                              <div className="w-10 h-10 rounded-full flex items-center justify-center text-white text-sm font-bold shrink-0" style={{ background: gradH }}>{(order.customerName || "?").charAt(0)}</div>
+                              <div>
+                                <div className="flex items-center gap-2">
+                                  <span className="text-sm font-bold" style={{ color: C.dark }}>{order.customerName || "نامشخص"}</span>
+                                  <span className="text-xs" style={{ color: C.textL }}>{order.date}</span>
+                                </div>
+                                <p className="text-[11px]" style={{ color: C.textL }}>{order.id}</p>
+                              </div>
                             </div>
                             <div className="flex items-center gap-3">
                               <span className="text-sm font-extrabold" style={{ color: C.dark }}>{formatPriceNum(order.total)}</span>
                               <span className="text-xs font-bold px-3 py-1 rounded-full text-white" style={{ background: order.status === "تحویل داده شد" ? "#22c55e" : order.status === "ارسال شد" ? "#3B82F6" : C.pink }}>{order.status}</span>
                               <button onClick={() => { const ns = [...userOrders]; ns[oi].status = ns[oi].status === "در حال پردازش" ? "ارسال شد" : "تحویل داده شد"; setUserOrders(ns); localStorage.setItem("cb_orders", JSON.stringify(ns)); }} className="text-xs font-bold px-3 py-1.5 rounded-lg cursor-pointer" style={{ color: "#fff", background: "#3B82F6" }}>تغییر وضعیت</button>
+                              <button onClick={() => setExpandedAdminOrder(expandedAdminOrder === order.id ? null : order.id)} className="w-8 h-8 rounded-lg flex items-center justify-center hover:bg-pink-50 transition-colors cursor-pointer" style={{ color: expandedAdminOrder === order.id ? C.red : C.dark }}>{expandedAdminOrder === order.id ? <ChevronUp className="w-4 h-4" /> : <ChevronDown className="w-4 h-4" />}</button>
                             </div>
                           </div>
-                          <div className="flex items-center gap-2 flex-wrap">
+
+                          {/* Customer & Shipping Info - Always Visible */}
+                          <div className="px-4 py-3 border-t" style={{ borderColor: C.light + "33" }}>
+                            <div className="flex items-center gap-2 mb-2">
+                              <User className="w-3.5 h-3.5" style={{ color: C.pink }} />
+                              <span className="text-xs font-bold" style={{ color: C.dark }}>اطلاعات سفارش‌دهنده</span>
+                            </div>
+                            <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-2">
+                              {order.phone && (
+                                <div className="flex items-center gap-2 px-3 py-2 rounded-lg" style={{ background: C.bg }}>
+                                  <Phone className="w-3.5 h-3.5 shrink-0" style={{ color: C.pink }} />
+                                  <div>
+                                    <span className="text-[10px] font-bold block" style={{ color: C.pink }}>شماره تماس</span>
+                                    <span className="text-xs" style={{ color: C.text }} dir="ltr">{order.phone}</span>
+                                  </div>
+                                </div>
+                              )}
+                              {order.customerInfo && Object.entries(order.customerInfo).map(([label, value]) => {
+                                const isAddress = label.includes("آدرس");
+                                const isNote = label.includes("توضیح");
+                                if (isNote && !value) return null;
+                                return (
+                                  <div key={label} className={"flex items-start gap-2 px-3 py-2 rounded-lg" + (isAddress ? " sm:col-span-2 lg:col-span-3" : "")} style={{ background: C.bg }}>
+                                    {isAddress ? <MapPin className="w-3.5 h-3.5 mt-0.5 shrink-0" style={{ color: C.pink }} /> : <FileText className="w-3.5 h-3.5 mt-0.5 shrink-0" style={{ color: C.pink }} />}
+                                    <div className="min-w-0">
+                                      <span className="text-[10px] font-bold block" style={{ color: C.pink }}>{isAddress ? "آدرس ارسال" : label}</span>
+                                      <span className="text-xs break-words" style={{ color: C.text }} dir={isAddress || isNote ? "rtl" : "ltr"}>{value}</span>
+                                    </div>
+                                  </div>
+                                );
+                              })}
+                              {(!order.customerInfo || Object.keys(order.customerInfo).length === 0) && order.address && (
+                                <div className="flex items-start gap-2 px-3 py-2 rounded-lg sm:col-span-2 lg:col-span-3" style={{ background: C.bg }}>
+                                  <MapPin className="w-3.5 h-3.5 mt-0.5 shrink-0" style={{ color: C.pink }} />
+                                  <div className="min-w-0">
+                                    <span className="text-[10px] font-bold block" style={{ color: C.pink }}>آدرس ارسال</span>
+                                    <span className="text-xs break-words" style={{ color: C.text }}>{order.address}</span>
+                                  </div>
+                                </div>
+                              )}
+                            </div>
+                          </div>
+
+                          {/* Order Items Summary */}
+                          <div className="px-4 py-2 border-t flex items-center gap-2 flex-wrap" style={{ borderColor: C.light + "33" }}>
+                            <Package className="w-3.5 h-3.5" style={{ color: C.textL }} />
+                            <span className="text-xs font-bold" style={{ color: C.textL }}>اقلام سفارش:</span>
                             {order.items.map((item, ii) => (
-                              <div key={ii} className="flex items-center gap-2 px-2 py-1 rounded-lg" style={{ background: C.bg }}>
-                                <div className="w-8 h-8 rounded-lg overflow-hidden shrink-0 flex items-center justify-center" style={{ background: C.bg }}><img src={fixImg(item.img)} alt="" className="w-8 h-8 object-contain" onError={e => { (e.target as HTMLImageElement).style.display = "none" }} /></div>
-                                <span className="text-[10px]" style={{ color: C.textL }}>{item.name} x {item.qty}</span>
+                              <div key={ii} className="flex items-center gap-1.5 px-2 py-1 rounded-lg" style={{ background: C.bg }}>
+                                <div className="w-6 h-6 rounded overflow-hidden shrink-0 flex items-center justify-center" style={{ background: "white" }}><img src={fixImg(item.img)} alt="" className="w-6 h-6 object-contain" onError={e => { (e.target as HTMLImageElement).style.display = "none" }} /></div>
+                                <span className="text-[10px]" style={{ color: C.textL }}>{item.name} × {item.qty}</span>
                               </div>
                             ))}
                           </div>
+
+                          {/* Expanded Detail */}
+                          <AnimatePresence>
+                            {expandedAdminOrder === order.id && (
+                              <motion.div initial={{ opacity: 0, height: 0 }} animate={{ opacity: 1, height: "auto" }} exit={{ opacity: 0, height: 0 }} transition={{ duration: 0.3 }} className="overflow-hidden">
+                                <div className="px-4 py-3 border-t" style={{ borderColor: C.light + "33" }}>
+                                  <p className="text-xs font-bold mb-2" style={{ color: C.dark }}>جزئیات اقلام</p>
+                                  <div className="flex flex-col gap-1.5">
+                                    {order.items.map((item, ii) => (
+                                      <div key={ii} className="flex items-center justify-between px-3 py-2 rounded-lg" style={{ background: C.bg }}>
+                                        <div className="flex items-center gap-2">
+                                          <div className="w-8 h-8 rounded overflow-hidden shrink-0 flex items-center justify-center" style={{ background: "white" }}><img src={fixImg(item.img)} alt="" className="w-8 h-8 object-contain" onError={e => { (e.target as HTMLImageElement).style.display = "none" }} /></div>
+                                          <span className="text-xs font-bold" style={{ color: C.text }}>{item.name}</span>
+                                        </div>
+                                        <div className="flex items-center gap-3">
+                                          <span className="text-[10px]" style={{ color: C.textL }}>تعداد: {item.qty}</span>
+                                          <span className="text-xs font-bold" style={{ color: C.dark }}>{item.price}</span>
+                                        </div>
+                                      </div>
+                                    ))}
+                                  </div>
+                                </div>
+                              </motion.div>
+                            )}
+                          </AnimatePresence>
                         </div>
                       ))}
                     </div>
